@@ -26,13 +26,27 @@ const server = async () => {
     const database = client.db("carrier-code");
     const jobsCollection = database.collection("jobs");
 
-    //? api
+    //? get all jobs
     app.get("/jobs", async (req, res) => {
       const result = await jobsCollection.find().toArray();
-      
+
       res.json({
         success: true,
         message: "All jobs data.",
+        data: result,
+      });
+    });
+
+    //? get job detail
+    app.get("/job/:id", async (req, res) => {
+      const { id } = req.params;
+      const result = await jobsCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      res.json({
+        success: true,
+        message: "Job detail for id " + id,
         data: result,
       });
     });
