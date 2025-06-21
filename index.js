@@ -25,6 +25,10 @@ const server = async () => {
 
     const database = client.db("carrier-code");
     const jobsCollection = database.collection("jobs");
+    const applicationsCollection =
+      database.collection("applications");
+
+    //~ job api
 
     //? get all jobs
     app.get("/jobs", async (req, res) => {
@@ -47,6 +51,50 @@ const server = async () => {
       res.json({
         success: true,
         message: "Job detail for id " + id,
+        data: result,
+      });
+    });
+
+    //~ application api
+
+    //? get user applications
+    app.get("/applications", async (req, res) => {
+      const { email } = req.query;
+
+      const result = await applicationsCollection
+        .find({
+          applicant: email,
+        })
+        .toArray();
+
+      //! bad way to aggrigate
+      for (const application of result) {
+        const jobId = application.jobId;
+        const job = await jobsCollection.findOne({
+          _id: new ObjectId(jobId),
+        });
+
+        application.job = job;
+      }
+
+      res.json({
+        success: true,
+        message: "All application list",
+        data: result,
+      });
+    });
+
+    //? post a application
+    app.post("/applications", async (req, res) => {
+      const application = req.body;
+
+      const result = await applicationsCollection.insertOne(
+        application
+      );
+
+      res.json({
+        success: true,
+        message: "Successfully applied for the job",
         data: result,
       });
     });
