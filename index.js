@@ -4,6 +4,9 @@ import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
+import admin from "firebase-admin";
+// prettier-ignore
+import serviceAccount from "./firebase_service_key.json" with { type: "json" };
 
 const app = express();
 const port = process.env.PORT || 9000;
@@ -17,33 +20,45 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
-const logger = (req, res, next) => {
-  console.log("from logger middleware");
-  next();
-};
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
-const verifyToken = (req, res, next) => {
-  const token = req?.cookies?.token;
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers?.authorization;
 
-  if (!token) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
       success: false,
-      message: "Unauthorized access!",
+      messaging: "unauthorized access!",
     });
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    const token = authHeader.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(token);
 
     req.decoded = decoded;
+
     next();
   } catch (err) {
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
-      message: "Unauthorized access!",
-      err: err,
+      message: "unauthorized access!",
+      err,
     });
   }
+};
+
+const verifyEmail = (req, res, next) => {
+  if (req.query.email !== req.decoded.email) {
+    return res.status(403).json({
+      success: false,
+      message: "forbidden access!",
+    });
+  }
+
+  next();
 };
 
 const uri = process.env.DB_URI;
@@ -124,33 +139,37 @@ const server = async () => {
     });
 
     //? get jobs's application count
-    app.get("/jobs/applications", async (req, res) => {
-      const { email } = req.query;
+    app.get(
+      "/jobs/applications",
+      verifyToken,
+      verifyEmail,
+      async (req, res) => {
+        const { email } = req.query;
 
-      const jobs = await jobsCollection
-        .find({ hr_email: email })
-        .toArray();
+        const jobs = await jobsCollection
+          .find({ hr_email: email })
+          .toArray();
 
-      //: should use aggrigate to use optimum result
+        //: should use aggrigate to use optimum result
 
-      const finalJobs = await Promise.all(
-        jobs.map(async (job) => {
-          const applicationsQuery = {
-            jobId: job._id.toString(),
-          };
+        const finalJobs = await Promise.all(
+          jobs.map(async (job) => {
+            const applicationsQuery = {
+              jobId: job._id.toString(),
+            };
 
-          const applicationsCount =
-            await applicationsCollection.countDocuments(
-              applicationsQuery
-            );
+            const applicationsCount =
+              await applicationsCollection.countDocuments(
+                applicationsQuery
+              );
 
-          job.applicationsCount = applicationsCount;
+            job.applicationsCount = applicationsCount;
 
-          return job;
-        })
-      );
+            return job;
+          })
+        );
 
-      /* for (const job of jobs) {
+        /* for (const job of jobs) {
         const applicationsQuery = {
           jobId: job._id.toString(),
         };
@@ -163,12 +182,13 @@ const server = async () => {
         job.applicationsCount = applicationsCount;
       } */
 
-      res.json({
-        success: true,
-        message: "All applications count",
-        data: finalJobs,
-      });
-    });
+        res.json({
+          success: true,
+          message: "All applications count",
+          data: finalJobs,
+        });
+      }
+    );
 
     //? post a job
 
@@ -187,38 +207,36 @@ const server = async () => {
     //~ application api
 
     //? get user applications
-    app.get("/applications", verifyToken, async (req, res) => {
-      const { email } = req.query;
+    app.get(
+      "/applications",
+      verifyToken,
+      verifyEmail,
+      async (req, res) => {
+        const { email } = req.query;
 
-      if (email !== req.decoded.email) {
-        return res.status(403).json({
-          success: false,
-          message: "Forbidden access.",
+        const result = await applicationsCollection
+          .find({
+            applicant: email,
+          })
+          .toArray();
+
+        //! bad way to aggrigate
+        for (const application of result) {
+          const jobId = application.jobId;
+          const job = await jobsCollection.findOne({
+            _id: new ObjectId(jobId),
+          });
+
+          application.job = job;
+        }
+
+        res.json({
+          success: true,
+          message: "All application list",
+          data: result,
         });
       }
-
-      const result = await applicationsCollection
-        .find({
-          applicant: email,
-        })
-        .toArray();
-
-      //! bad way to aggrigate
-      for (const application of result) {
-        const jobId = application.jobId;
-        const job = await jobsCollection.findOne({
-          _id: new ObjectId(jobId),
-        });
-
-        application.job = job;
-      }
-
-      res.json({
-        success: true,
-        message: "All application list",
-        data: result,
-      });
-    });
+    );
 
     //? get job specific applications
     app.get("/applications/job/:id", async (req, res) => {
@@ -279,7 +297,7 @@ const server = async () => {
       });
     });
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log("database connected successfully.");
   } finally {
     //// await client.close()
